@@ -22,39 +22,41 @@ long_options = [
     "signature-algorithm=",
 ]
 
+__version = "0.2.2"
 
 def usage():
     """
     Print usage information.
     :return: None
     """
-    print("""Copyright (C) 2018 by Andreas Maus <ecbeb08bb9f1b8e8f421fbf4c28e3033ecb13bc0@ypbind.de>
+    print("""check_ssl_cert_file version %s
+
+Copyright (c) 2016 - 2018 by Andreas Maus <ecbeb08bb9f1b8e8f421fbf4c28e3033ecb13bc0@ypbind.de>
 This program comes with ABSOLUTELY NO WARRANTY.
 
 This program is distributed under the Terms of the GNU General
 Public License Version 3. (http://www.gnu.org/copyleft/gpl.html)
 
-Usage: %s [-h|--help] [-e <days>|--expires=<days>] [-v|--valid] [-s <algo>|--signature-algorithm=<algo>] <cert_file>
+Usage: check_ssl_cert_file [-h|--help] [-e <days>|--expires=<days>] [-v|--valid] [-s <algo>|--signature-algorithm=<algo>] <cert_file>
 
-    -e <wdays>,<cdays>          Check if certificates in <wdays>/<cdays> or less.
+    -e <wdays>,<cdays>          Check if the certificate expires in <wdays>/<cdays> or less.
     --expires=<wdays>,<cdays>   If the certificate expires in <cdays> or less, report critical condition. If the
                                 certificate expires in <wdays> or less (but expiration is > <cdays>) report warning
                                 condition.
-    
-    -v                          Check if certificate is valid.
-    --valid                     A certificate is considered valid if the current time is larger or equal than 
-                                the notBefore time and less than notAfter time.
-                                This is the default check if nothing else has been specified.
                                 
     -h                          This text
     --help
-
+    
     -s <algo>                   Check signature algorithm of public key file.
     --signature-agorithm=<algo> <algo> is a comma separated list of valid signature algorithm as defined
                                 by OpenSSL, e.g.  sha256WithRSAEncryption,sha384WithRSAEncryption, ...
 
+    -v                          Check if certificate is valid.
+    --valid                     A certificate is considered valid if the current time is larger or equal than 
+                                the notBefore time and less than notAfter time.
+                                This is the default check if nothing else has been specified.
 
-    """ % (sys.argv[0], ))
+    """ % (__version, )
 
 
 def load_public_key(pub_file, cert_type="PEM"):
