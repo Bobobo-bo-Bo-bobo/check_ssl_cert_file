@@ -1,0 +1,345 @@
+#!/usr/bin/env python
+"""Check local certificate file"""
+
+import getopt
+import math
+import sys
+import time
+import OpenSSL
+
+
+# return codes
+OK = 0
+WARNING = 1
+CRITICAL = 2
+UNKNOWN = 3
+
+short_options = "e:vhs:"
+long_options = [
+    "expires=",
+    "valid",
+    "help",
+    "signature-algorithm=",
+]
+
+
+def usage():
+    """
+    Print usage information.
+    :return: None
+    """
+    print("""Copyright (C) 2018 by Andreas Maus <ecbeb08bb9f1b8e8f421fbf4c28e3033ecb13bc0@ypbind.de>
+This program comes with ABSOLUTELY NO WARRANTY.
+
+This program is distributed under the Terms of the GNU General
+Public License Version 3. (http://www.gnu.org/copyleft/gpl.html)
+
+Usage: %s [-h|--help] [-e <days>|--expires=<days>] [-v|--valid] [-s <algo>|--signature-algorithm=<algo>] <cert_file>
+
+    -e <wdays>,<cdays>          Check if certificates in <wdays>/<cdays> or less.
+    --expires=<wdays>,<cdays>   If the certificate expires in <cdays> or less, report critical condition. If the
+                                certificate expires in <wdays> or less (but expiration is > <cdays>) report warning
+                                condition.
+    
+    -v                          Check if certificate is valid.
+    --valid                     A certificate is considered valid if the current time is larger or equal than 
+                                the notBefore time and less than notAfter time.
+                                This is the default check if nothing else has been specified.
+                                
+    -h                          This text
+    --help
+
+    -s <algo>                   Check signature algorithm of public key file.
+    --signature-agorithm=<algo> <algo> is a comma separated list of valid signature algorithm as defined
+                                by OpenSSL, e.g.  sha256WithRSAEncryption,sha384WithRSAEncryption, ...
+
+
+    """ % (sys.argv[0], ))
+
+
+def load_public_key(pub_file, cert_type="PEM"):
+    """
+    Load public key of a X509 certificate
+    :param pub_file: pem_file
+    :param cert_type: type of certificate, default: PEM
+    :return: X509 object representing CA public key, None on error
+    """
+    public_key = None
+
+    try:
+        fd = open(pub_file, "r")
+        raw = fd.read()
+        fd.close()
+    except IOError as ioe:
+        sys.stderr.write("Error: Can't read from %s - %s\n" % (pub_file, ioe.strerror))
+        return None
+    except OSError as ose:
+        sys.stderr.write("Error: Can't read from %s - %s\n" % (pub_file, ose.strerror))
+        return None
+
+    # TODO: Allow for more certificate types
+    if cert_type == "PEM":
+        try:
+            public_key = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, raw)
+        except OpenSSL.crypto.Error as sslerror:
+            sys.stderr.write("Error: Can't parse data from %s - %s\n" % (pub_file, sslerror.message))
+            return None
+
+    return public_key
+
+
+def x509time_to_unix(x509time):
+    """
+    Convert X509 ASN.1 time string to Unix epoch
+    :param x509time: X509 ASN.1 time string
+    :return: Unix epoch as float or None on error
+    """
+    # Three different formats are possible:
+    #
+    #  YYYYMMDDhhmmssZ, YYYYMMDDhhmmss+hhmm or YYYYMMDDhhmmss-hhmm
+    #
+    # The last two can't be parsed by time.strptime() although it states "...same as strftime()"
+    # and strftime %z results in the correct offset.
+    #
+    # If it wasn't shitty enough, datetimes strptime documents %z and %Z but both are not
+    # usable before Python 3.2. Before Python 3.2 datetime.strptime calls
+    #  datetime(*(time.strptime(datestr, formatstr)[0:6]))
+    #
+    # Note #1: Notice the [0:6] !
+    # Note #2: Because time.strptime does not support %z/%Z, so datetime wont work either although
+    #          documented otherwise, e.g. see
+    #          https://docs.python.org/2.6/library/datetime.html#strftime-and-strptime-behavior
+    #
+    # Fuck you Python!
+    #
+    stamp = None
+    if x509time[-1] == "Z":
+        try:
+            stamp = float(time.strftime("%s", time.strptime(x509time, "%Y%m%d%H%M%SZ")))
+        except ValueError as valer:
+            sys.stderr.write("Error: Can't convert X509 ASN1 time %s to a number: %s\n" % (x509time, valer.message))
+            return None
+
+    elif x509time[-5] in ("-", "+"):
+        try:
+            dtime = x509time[:-5]
+            dtzstr = x509time[-5:]
+            sign = dtzstr[0]
+            dtzhh = float(dtzstr[1:3])
+            dtzmm = float(dtzstr[3:5])
+
+            stamp = float(time.strftime("%s", time.strptime(dtime, "%Y%m%d%H%M%S")))
+            dtzoffset = 3600.0 * dtzhh + 60.0 * dtzmm
+
+            if sign == "+":
+                stamp += dtzoffset
+            else:
+                stamp -= dtzoffset
+
+        except ValueError as valer:
+            sys.stderr.write("Error: Can't convert X509 ASN1 time %s to a number: %s\n" % (x509time, valer.message))
+            return None
+
+    return stamp
+
+
+def check_certificate_validity(pub):
+    """
+    Check if public key of a certificate is valid
+    :param pub: X509 object of public key
+    :return: <0 if certificate is not yet valid, 0 if it is valid, >0 if it is no longer valid, None on error
+    """
+    if pub is None:
+        return None
+
+    not_before = pub.get_notBefore()
+    not_after = pub.get_notAfter()
+
+    not_before_stamp = x509time_to_unix(not_before)
+    not_after_stamp = x509time_to_unix(not_after)
+
+    # _Both_ must be set
+    if not_after_stamp is None or not_before_stamp is None:
+        return None
+
+    now = time.time()
+
+    if not_before_stamp < now < not_after_stamp:
+        return 0
+    elif now <= not_before_stamp:
+        return now - not_before_stamp
+    elif now >= not_after_stamp:
+        return now - not_after_stamp
+    else:
+        return None
+
+
+def check_certificate_expiration(pub):
+    """
+    Return time period til expiration
+    :param pub: X509 object of public key
+    :return: time between now and expiration time (this means the result is <0 if the certificate was already expired)
+             None on error
+    """
+    if pub is None:
+        return None
+
+    not_after = pub.get_notAfter()
+    not_after_stamp = x509time_to_unix(not_after)
+    if not_after_stamp is None:
+        return None
+
+    now = time.time()
+    return not_after_stamp - now
+
+
+def get_signature_algorithm(pub):
+    """
+    Get signature algorithm from certificate
+    :param pub: X509 object of public key
+    :return: string of signature algorithm, None on error
+    """
+    try:
+        salgo = pub.get_signature_algorithm()
+    except OpenSSL.crypto.Error:
+        return None
+
+    return salgo
+
+
+if __name__ == "__main__":
+    check_valid = True
+    check_sig_algo = None
+    check_expire = None
+    state = None
+    message = None
+
+    try:
+        (options, trailing) = getopt.getopt(sys.argv[1:], shortopts=short_options, longopts=long_options)
+    except getopt.GetoptError as goe:
+        sys.stderr.write("Error: Can't parse arguments: %s\n" % (goe.message, ))
+        sys.exit(UNKNOWN)
+
+    for (opt, arg) in options:
+        if opt in ("-h", "--help"):
+            usage()
+            sys.exit(OK)
+
+        elif opt in ("-e", "--expires"):
+            try:
+                exp = arg.split(",")
+                if len(exp) == 1:
+                    cexp = float(exp[0])
+                    wexp = cexp
+                elif len(exp) == 2:
+                    wexp = float(exp[0])
+                    cexp = float(exp[1])
+                else:
+                    sys.stderr.write("Error: Invalid argument for expiration\n\n")
+                    usage()
+                    sys.exit(UNKNOWN)
+
+                check_expire = [wexp, cexp]
+
+            except ValueError as vale:
+                sys.stderr.write("Error: Can't convert %s to a number\n" % (arg, ))
+                sys.exit(UNKNOWN)
+
+            # sanity checks
+            if check_expire[0] <= 0.0 or check_expire[1] <= 0.0:
+                sys.stderr.write("Error: Expiration time must be greater than 0\n")
+                sys.exit(UNKNOWN)
+
+            if check_expire[0] < check_expire[1]:
+                sys.stderr.write("Error: Warning threshold must be >= critical threshold\n")
+                sys.exit(UNKNOWN)
+
+            # convert days to seconds
+            check_expire[0] *= 86400.0
+            check_expire[1] *= 86400.0
+
+        elif opt in ("-s", "--signature-algorithm"):
+            sig_list = arg.split(",")
+            check_sig_algo = set()
+            for sig in sig_list:
+                if sig.strip() != "":
+                    check_sig_algo.add(sig.strip().lower())
+
+            if len(check_sig_algo) == 0:
+                sys.stderr.write("Error: Invalid list of signature algorithms\n\n")
+                usage()
+                sys.exit(UNKNOWN)
+
+        elif opt in ("-v", "--valid"):
+            # validity check is the default
+            pass
+
+    if len(trailing) == 1:
+        public_cert_key = load_public_key(trailing[0])
+    else:
+        sys.stderr.write("Error: Not enough arguments\n\n")
+        usage()
+        sys.exit(UNKNOWN)
+
+    if check_expire is not None:
+        # don't check expiration if the certificate is not valid (yet)
+        is_valid = check_certificate_validity(public_cert_key)
+        if is_valid is None:
+            state = UNKNOWN
+            message = "Can't get validity period from certificate file %s" % (trailing[0], )
+        elif is_valid < 0:
+            state = WARNING
+            message = "Certificate from %s is not valid yet (will be valid %.0f days)"\
+                      % (trailing[0], math.ceil(-is_valid))
+        elif is_valid > 0:
+            state = CRITICAL
+            message = "Certificate from %s is not longer valid (has expired %.0f days ago)"\
+                      % (trailing[0]. math.floor(is_valid))
+        else:
+            # Note: result will always not None because we checked validity before and bail out if
+            # the certificate is either not valid yet or has already been expired
+            expires_in = check_certificate_expiration(public_cert_key)
+            if expires_in >= 0.0:
+                tstr = time.strftime("%b %d %H:%M:%S %Y GMT", time.localtime(time.time() + expires_in))
+                message = "Certificate from %s will expire in %.0f days on %s" % (trailing[0], expires_in / 86400, tstr)
+
+                # critical threshold
+                if expires_in <= check_expire[1]:
+                    state = CRITICAL
+                # warning threshold
+                elif expires_in <= check_expire[0]:
+                    state = WARNING
+                else:
+                    state = OK
+
+    elif check_sig_algo is not None:
+        signature_algorithm = get_signature_algorithm(public_cert_key)
+        if signature_algorithm is None:
+            state = UNKNOWN
+            message = "Can't get signature algorithm from %s" % (trailing[0], )
+        else:
+            message = "Certificate from %s has signature algorithm of %s" % (trailing[0], signature_algorithm)
+            if signature_algorithm.lower() in check_sig_algo:
+                state = OK
+            else:
+                state = WARNING
+
+    else:
+        is_valid = check_certificate_validity(public_cert_key)
+        if is_valid is None:
+            state = UNKNOWN
+            message = "Can't get validity period from certificate file %s" % (trailing[0], )
+        elif is_valid < 0:
+            state = WARNING
+            message = "Certificate from %s is not valid yet (will be valid %.0f days)"\
+                      % (trailing[0], math.ceil(-is_valid))
+        elif is_valid > 0:
+            state = CRITICAL
+            message = "Certificate from %s is not longer valid (has expired %.0f days ago)"\
+                      % (trailing[0]. math.floor(is_valid))
+        else:
+            state = OK
+            message = "Certificate from %s is valid" % (trailing[0],)
+
+    print(message)
+    sys.exit(state)

@@ -1,0 +1,6 @@
+tmp/
+.idea/
+*.swp
+*.pyc
+*.pyo
+
