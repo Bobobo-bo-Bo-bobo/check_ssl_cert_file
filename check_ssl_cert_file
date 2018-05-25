@@ -56,7 +56,7 @@ Usage: check_ssl_cert_file [-h|--help] [-e <days>|--expires=<days>] [-v|--valid]
                                 the notBefore time and less than notAfter time.
                                 This is the default check if nothing else has been specified.
 
-    """ % (__version, )
+    """ % (__version, ))
 
 
 def load_public_key(pub_file, cert_type="PEM"):
