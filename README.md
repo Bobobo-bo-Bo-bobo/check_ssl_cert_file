@@ -21,6 +21,7 @@ Required packages:
 Supported command line parameters are:
 
   * `-h` or `--help` - shows a brief help
+  * `-i <issuer>` or `--issuer=<issuer>` - check if the certificate has been issued by <issuer>
   * `-e <wdays>,<cdays>` or --expires=<wdays>,<cdays> - check if the certificate expires in <wdays>/<cdays> or less
   * `-s <algo>` or `--signature-agorithm=<algo>` - check signature algorithm of public key file.
   * `-v` or `--valid` - check if certificate is valid (this is the default check if no other check is requested)
