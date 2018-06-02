@@ -14,15 +14,17 @@ WARNING = 1
 CRITICAL = 2
 UNKNOWN = 3
 
-short_options = "e:vhs:"
+short_options = "e:vhs:i:"
 long_options = [
     "expires=",
     "valid",
     "help",
     "signature-algorithm=",
+    "issuer=",
 ]
 
-__version = "0.2.2"
+__version = "0.3.0"
+
 
 def usage():
     """
@@ -37,7 +39,8 @@ This program comes with ABSOLUTELY NO WARRANTY.
 This program is distributed under the Terms of the GNU General
 Public License Version 3. (http://www.gnu.org/copyleft/gpl.html)
 
-Usage: check_ssl_cert_file [-h|--help] [-e <days>|--expires=<days>] [-v|--valid] [-s <algo>|--signature-algorithm=<algo>] <cert_file>
+Usage: check_ssl_cert_file [-h|--help] [-e <days>|--expires=<days>] [-v|--valid] [-i <issuer>|--issuer=<issuer>] 
+[-s <algo>|--signature-algorithm=<algo>] <cert_file>
 
     -e <wdays>,<cdays>          Check if the certificate expires in <wdays>/<cdays> or less.
     --expires=<wdays>,<cdays>   If the certificate expires in <cdays> or less, report critical condition. If the
@@ -46,7 +49,10 @@ Usage: check_ssl_cert_file [-h|--help] [-e <days>|--expires=<days>] [-v|--valid]
                                 
     -h                          This text
     --help
-    
+
+    -i <issuer>                 Check if the certificate has been issued by <issuer>
+    --issuer=<issuer>    
+
     -s <algo>                   Check signature algorithm of public key file.
     --signature-agorithm=<algo> <algo> is a comma separated list of valid signature algorithm as defined
                                 by OpenSSL, e.g.  sha256WithRSAEncryption,sha384WithRSAEncryption, ...
@@ -56,7 +62,7 @@ Usage: check_ssl_cert_file [-h|--help] [-e <days>|--expires=<days>] [-v|--valid]
                                 the notBefore time and less than notAfter time.
                                 This is the default check if nothing else has been specified.
 
-    """ % (__version, )
+    """ % (__version, ))
 
 
 def load_public_key(pub_file, cert_type="PEM"):
@@ -195,6 +201,31 @@ def check_certificate_expiration(pub):
     return not_after_stamp - now
 
 
+def get_issuer_string(pub):
+    """
+    Get issuer as str from public key
+    :param pub: X509 object of public key
+    :return: string of issuer, None on error
+    """
+    try:
+        issuer_obj = pub.get_issuer()
+        if issuer_obj is None:
+            sys.stderr.write("Error: Can't get issuer from certificate\n")
+            return None
+
+        issuer_subj_tuple = issuer_obj.get_components()
+        arr = []
+        for key in issuer_subj_tuple:
+            arr.append(key[0] + "=" + key[1])
+
+        issuer_str = "/" + "/".join(arr)
+    except OpenSSL.crypto.Error as sslerror:
+        sys.stderr.write("Error: Can't parse data from %s - %s\n" % (pub, sslerror.message))
+        return None
+
+    return issuer_str
+
+
 def get_signature_algorithm(pub):
     """
     Get signature algorithm from certificate
@@ -215,6 +246,7 @@ if __name__ == "__main__":
     check_expire = None
     state = None
     message = None
+    check_issuer = None
 
     try:
         (options, trailing) = getopt.getopt(sys.argv[1:], shortopts=short_options, longopts=long_options)
@@ -260,6 +292,11 @@ if __name__ == "__main__":
             check_expire[0] *= 86400.0
             check_expire[1] *= 86400.0
 
+        elif opt in ("-i", "--issuer"):
+            check_issuer = arg.strip()
+            if check_issuer == "":
+                sys.stderr.write("Error: Issuer can't be an empty string\n")
+                sys.exit(UNKNOWN)
         elif opt in ("-s", "--signature-algorithm"):
             sig_list = arg.split(",")
             check_sig_algo = set()
@@ -325,6 +362,19 @@ if __name__ == "__main__":
                 state = OK
             else:
                 state = WARNING
+
+    elif check_issuer is not None:
+        cur_issuer = get_issuer_string(public_cert_key)
+        if cur_issuer is None:
+            state = UNKNOWN
+            message = "Unable to get issuer from certificate"
+        else:
+            if cur_issuer.strip() == check_issuer:
+                state = OK
+                message = "Certificate has been issued by %s" % (cur_issuer, )
+            else:
+                state = WARNING
+                message = "Certificate has been issued by %s instead of %s" % (cur_issuer, check_issuer)
 
     else:
         is_valid = check_certificate_validity(public_cert_key)
