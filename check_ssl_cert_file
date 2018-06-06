@@ -14,16 +14,17 @@ WARNING = 1
 CRITICAL = 2
 UNKNOWN = 3
 
-short_options = "e:vhs:i:"
+short_options = "e:vhs:i:f:"
 long_options = [
     "expires=",
     "valid",
     "help",
     "signature-algorithm=",
     "issuer=",
+    "file=",
 ]
 
-__version = "0.3.0"
+__version = "0.3.1"
 
 
 def usage():
@@ -40,13 +41,16 @@ This program is distributed under the Terms of the GNU General
 Public License Version 3. (http://www.gnu.org/copyleft/gpl.html)
 
 Usage: check_ssl_cert_file [-h|--help] [-e <days>|--expires=<days>] [-v|--valid] [-i <issuer>|--issuer=<issuer>] 
-[-s <algo>|--signature-algorithm=<algo>] <cert_file>
+[-s <algo>|--signature-algorithm=<algo>] -f <cert_file>|--file=<cert_file>
 
     -e <wdays>,<cdays>          Check if the certificate expires in <wdays>/<cdays> or less.
     --expires=<wdays>,<cdays>   If the certificate expires in <cdays> or less, report critical condition. If the
                                 certificate expires in <wdays> or less (but expiration is > <cdays>) report warning
                                 condition.
-                                
+
+    -f <cert_file>              Certificate file to check.
+    --file=<cert_file>
+
     -h                          This text
     --help
 
@@ -247,6 +251,7 @@ if __name__ == "__main__":
     state = None
     message = None
     check_issuer = None
+    cert_file = None
 
     try:
         (options, trailing) = getopt.getopt(sys.argv[1:], shortopts=short_options, longopts=long_options)
@@ -309,12 +314,14 @@ if __name__ == "__main__":
                 usage()
                 sys.exit(UNKNOWN)
 
+        elif opt in ("-f", "--file"):
+            cert_file = arg
         elif opt in ("-v", "--valid"):
             # validity check is the default
             pass
 
-    if len(trailing) == 1:
-        public_cert_key = load_public_key(trailing[0])
+    if cert_file is not None:
+        public_cert_key = load_public_key(cert_file)
     else:
         sys.stderr.write("Error: Not enough arguments\n\n")
         usage()
@@ -325,22 +332,22 @@ if __name__ == "__main__":
         is_valid = check_certificate_validity(public_cert_key)
         if is_valid is None:
             state = UNKNOWN
-            message = "Can't get validity period from certificate file %s" % (trailing[0], )
+            message = "Can't get validity period from certificate file %s" % (cert_file, )
         elif is_valid < 0:
             state = WARNING
             message = "Certificate from %s is not valid yet (will be valid %.0f days)"\
-                      % (trailing[0], math.ceil(-is_valid))
+                      % (cert_file, math.ceil(-is_valid))
         elif is_valid > 0:
             state = CRITICAL
             message = "Certificate from %s is not longer valid (has expired %.0f days ago)"\
-                      % (trailing[0]. math.floor(is_valid))
+                      % (cert_file. math.floor(is_valid))
         else:
             # Note: result will always not None because we checked validity before and bail out if
             # the certificate is either not valid yet or has already been expired
             expires_in = check_certificate_expiration(public_cert_key)
             if expires_in >= 0.0:
                 tstr = time.strftime("%b %d %H:%M:%S %Y GMT", time.localtime(time.time() + expires_in))
-                message = "Certificate from %s will expire in %.0f days on %s" % (trailing[0], expires_in / 86400, tstr)
+                message = "Certificate from %s will expire in %.0f days on %s" % (cert_file, expires_in / 86400, tstr)
 
                 # critical threshold
                 if expires_in <= check_expire[1]:
@@ -355,9 +362,9 @@ if __name__ == "__main__":
         signature_algorithm = get_signature_algorithm(public_cert_key)
         if signature_algorithm is None:
             state = UNKNOWN
-            message = "Can't get signature algorithm from %s" % (trailing[0], )
+            message = "Can't get signature algorithm from %s" % (cert_file, )
         else:
-            message = "Certificate from %s has signature algorithm of %s" % (trailing[0], signature_algorithm)
+            message = "Certificate from %s has signature algorithm of %s" % (cert_file, signature_algorithm)
             if signature_algorithm.lower() in check_sig_algo:
                 state = OK
             else:
@@ -380,18 +387,18 @@ if __name__ == "__main__":
         is_valid = check_certificate_validity(public_cert_key)
         if is_valid is None:
             state = UNKNOWN
-            message = "Can't get validity period from certificate file %s" % (trailing[0], )
+            message = "Can't get validity period from certificate file %s" % (cert_file, )
         elif is_valid < 0:
             state = WARNING
             message = "Certificate from %s is not valid yet (will be valid %.0f days)"\
-                      % (trailing[0], math.ceil(-is_valid))
+                      % (cert_file, math.ceil(-is_valid))
         elif is_valid > 0:
             state = CRITICAL
             message = "Certificate from %s is not longer valid (has expired %.0f days ago)"\
-                      % (trailing[0]. math.floor(is_valid))
+                      % (cert_file. math.floor(is_valid))
         else:
             state = OK
-            message = "Certificate from %s is valid" % (trailing[0],)
+            message = "Certificate from %s is valid" % (cert_file,)
 
     print(message)
     sys.exit(state)
